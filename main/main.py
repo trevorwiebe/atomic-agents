@@ -8,8 +8,12 @@ from rich.text import Text
 
 from code_base_provider import CodeBaseProvider
 from prompt_library import PromptLibrary
+from dotenv import load_dotenv
 
-API_KEY = os.getenv("API_KEY")
+# Load environment variables from .env file
+load_dotenv()
+
+API_KEY = os.environ.get("API_KEY")
 SELECTED_LIBRARY_PROMPT = "KMP_DEVELOPER"  # change this to what ever prompt best fits the task at hand
 
 console = Console()

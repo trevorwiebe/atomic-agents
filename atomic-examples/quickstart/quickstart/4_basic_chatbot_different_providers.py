@@ -44,7 +44,9 @@ def setup_client(provider):
     elif provider == "4" or provider == "ollama":
         from openai import OpenAI as OllamaClient
 
-        client = instructor.from_openai(OllamaClient(base_url="http://localhost:11434/v1", api_key="ollama"))
+        client = instructor.from_openai(
+            OllamaClient(base_url="http://localhost:11434/v1", api_key="ollama"), mode=instructor.Mode.JSON
+        )
         model = "llama3"
     elif provider == "5" or provider == "gemini":
         from openai import OpenAI
@@ -55,6 +57,12 @@ def setup_client(provider):
             mode=instructor.Mode.JSON,
         )
         model = "gemini-2.0-flash-exp"
+    elif provider == "6" or provider == "openrouter":
+        from openai import OpenAI as OpenRouterClient
+
+        api_key = os.getenv("OPENROUTER_API_KEY")
+        client = instructor.from_openai(OpenRouterClient(base_url="https://openrouter.ai/api/v1", api_key=api_key))
+        model = "mistral/ministral-8b"
     else:
         raise ValueError(f"Unsupported provider: {provider}")
 
@@ -62,7 +70,7 @@ def setup_client(provider):
 
 
 # Prompt the user to choose a provider from one in the list below.
-providers_list = ["openai", "anthropic", "groq", "ollama", "gemini"]
+providers_list = ["openai", "anthropic", "groq", "ollama", "gemini", "openrouter"]
 y = "bold yellow"
 b = "bold blue"
 g = "bold green"
@@ -77,7 +85,7 @@ provider = console.input(providers_str).lower()
 client, model = setup_client(provider)
 
 # Agent setup with specified configuration
-agent = BaseAgent(config=BaseAgentConfig(client=client, model=model, memory=memory, max_tokens=2048))
+agent = BaseAgent(config=BaseAgentConfig(client=client, model=model, memory=memory, model_api_parameters={"max_tokens": 2048}))
 
 # Generate the default system prompt for the agent
 default_system_prompt = agent.system_prompt_generator.generate_prompt()

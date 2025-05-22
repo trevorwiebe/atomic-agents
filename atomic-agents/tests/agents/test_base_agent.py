@@ -24,6 +24,19 @@ def mock_instructor():
 
 
 @pytest.fixture
+def mock_instructor_async():
+    mock = Mock(spec=instructor.Instructor)
+    mock.chat.completions.create = Mock()
+
+    # Mock the create_partial method to return an async generator
+    async def mock_create_partial(*args, **kwargs):
+        yield BaseAgentOutputSchema(chat_message="Mocked response")
+
+    mock.chat.completions.create_partial = mock_create_partial
+    return mock
+
+
+@pytest.fixture
 def mock_memory():
     mock = Mock(spec=AgentMemory)
     mock.get_history.return_value = []
@@ -63,8 +76,75 @@ def test_initialization(agent, mock_instructor, mock_memory, mock_system_prompt_
     assert agent.system_prompt_generator == mock_system_prompt_generator
     assert agent.input_schema == BaseAgentInputSchema
     assert agent.output_schema == BaseAgentOutputSchema
-    assert agent.temperature == 0
-    assert agent.max_tokens is None
+    assert "max_tokens" not in agent.model_api_parameters
+
+
+# model_api_parameters should have priority over the deprecated temperature parameter if both are provided.
+def test_initialization_temperature_priority(mock_instructor, mock_memory, mock_system_prompt_generator):
+    config = BaseAgentConfig(
+        client=mock_instructor,
+        model="gpt-4o-mini",
+        memory=mock_memory,
+        system_prompt_generator=mock_system_prompt_generator,
+        temperature=0.5,
+        model_api_parameters={"temperature": 1.0},
+    )
+    agent = BaseAgent(config)
+    assert agent.model_api_parameters["temperature"] == 1.0
+
+
+def test_initialization_without_temperature(mock_instructor, mock_memory, mock_system_prompt_generator):
+    config = BaseAgentConfig(
+        client=mock_instructor,
+        model="gpt-4o-mini",
+        memory=mock_memory,
+        system_prompt_generator=mock_system_prompt_generator,
+        temperature=0.5,
+        model_api_parameters={},  # No temperature specified
+    )
+    agent = BaseAgent(config)
+    assert agent.model_api_parameters["temperature"] == 0.5
+
+
+def test_initialization_without_max_tokens(mock_instructor, mock_memory, mock_system_prompt_generator):
+    config = BaseAgentConfig(
+        client=mock_instructor,
+        model="gpt-4o-mini",
+        memory=mock_memory,
+        system_prompt_generator=mock_system_prompt_generator,
+        max_tokens=1024,
+        model_api_parameters={},  # No temperature specified
+    )
+    agent = BaseAgent(config)
+    assert agent.model_api_parameters["max_tokens"] == 1024
+
+
+def test_initialization_system_role_equals_developer(mock_instructor, mock_memory, mock_system_prompt_generator):
+    config = BaseAgentConfig(
+        client=mock_instructor,
+        model="gpt-4o-mini",
+        memory=mock_memory,
+        system_prompt_generator=mock_system_prompt_generator,
+        system_role="developer",
+        model_api_parameters={},  # No temperature specified
+    )
+    agent = BaseAgent(config)
+    _ = agent.get_response()
+    assert isinstance(agent.messages, list) and agent.messages[0]["role"] == "developer"
+
+
+def test_initialization_system_role_equals_None(mock_instructor, mock_memory, mock_system_prompt_generator):
+    config = BaseAgentConfig(
+        client=mock_instructor,
+        model="gpt-4o-mini",
+        memory=mock_memory,
+        system_prompt_generator=mock_system_prompt_generator,
+        system_role=None,
+        model_api_parameters={},  # No temperature specified
+    )
+    agent = BaseAgent(config)
+    _ = agent.get_response()
+    assert isinstance(agent.messages, list) and len(agent.messages) == 0
 
 
 def test_reset_memory(agent, mock_memory):
@@ -89,8 +169,6 @@ def test_get_response(agent, mock_instructor, mock_memory, mock_system_prompt_ge
         model="gpt-4o-mini",
         messages=[{"role": "system", "content": "System prompt"}, {"role": "user", "content": "Hello"}],
         response_model=BaseAgentOutputSchema,
-        temperature=0,
-        max_tokens=None,
     )
 
 
@@ -216,6 +294,30 @@ async def test_run_async(agent, mock_memory):
     assert responses == [mock_output]
     assert agent.current_user_input == mock_input
     mock_memory.add_message.assert_has_calls([call("user", mock_input), call("assistant", mock_output)])
+
+
+@pytest.mark.asyncio
+async def test_run_async_with_no_system_role(mock_instructor_async, mock_memory):
+    # Create a BaseAgentConfig with system_role set to None
+    config = BaseAgentConfig(
+        client=mock_instructor_async,
+        model="gpt-4o-mini",
+        memory=mock_memory,
+        system_prompt_generator=None,  # No system prompt generator
+        system_role=None,  # Ensure system_role is None
+    )
+    agent = BaseAgent(config)
+
+    # Create a mock input
+    mock_input = BaseAgentInputSchema(chat_message="Test input")
+
+    # Collect all responses from the actual run_async method
+    responses = []
+    async for response in agent.run_async(mock_input):
+        responses.append(response)
+
+    # Assertions
+    assert agent.messages == []  # Ensure self.messages was set to an empty list
 
 
 @pytest.mark.asyncio

@@ -1,136 +1,382 @@
 # Quickstart Guide
 
-This guide will help you get started with Atomic Agents quickly through practical examples.
+**See also:**
+
+- [Quickstart runnable examples on GitHub](https://github.com/BrainBlend-AI/atomic-agents/tree/main/atomic-examples/quickstart)
+- [All Atomic Agents examples on GitHub](https://github.com/BrainBlend-AI/atomic-agents/tree/main/atomic-examples)
+
+This guide will help you get started with the Atomic Agents framework. We'll cover basic usage, custom agents, and different AI providers.
 
 ## Installation
 
-1. Clone the Atomic Agents repository:
+First, install the package using pip:
 
-   ```bash
-   git clone https://github.com/BrainBlend-AI/atomic-agents
-   ```
+```bash
+pip install atomic-agents
+```
 
-2. Install dependencies using Poetry:
+## Basic Chatbot
 
-   ```bash
-   cd atomic-agents
-   poetry install
-   ```
-
-## Basic Examples
-
-### 1. Basic Chatbot
-
-This example demonstrates a simple chatbot using the Atomic Agents framework:
+Let's start with a simple chatbot:
 
 ```python
 import os
 import instructor
-from openai import OpenAI
-from atomic_agents.agents.base_agent import BaseAgent, BaseAgentConfig
+import openai
+from rich.console import Console
+from atomic_agents.lib.components.agent_memory import AgentMemory
+from atomic_agents.agents.base_agent import BaseAgent, BaseAgentConfig, BaseAgentInputSchema, BaseAgentOutputSchema
 
-# Initialize OpenAI client
-client = instructor.from_openai(OpenAI())
+# Initialize console for pretty outputs
+console = Console()
 
-# Create basic configuration
-config = BaseAgentConfig(
-    client=client,
-    model="gpt-4o-mini"
+# Memory setup
+memory = AgentMemory()
+
+# Initialize memory with an initial message from the assistant
+initial_message = BaseAgentOutputSchema(chat_message="Hello! How can I assist you today?")
+memory.add_message("assistant", initial_message)
+
+# OpenAI client setup using the Instructor library
+client = instructor.from_openai(openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY")))
+
+# Agent setup with specified configuration
+agent = BaseAgent(
+    config=BaseAgentConfig(
+        client=client,
+        model="gpt-4o-mini",  # Using gpt-4o-mini model
+        memory=memory,
+    )
 )
 
-# Initialize agent
-agent = BaseAgent(config)
-
-# Start chat loop
+# Start a loop to handle user inputs and agent responses
 while True:
-    user_input = input("You: ")
-    if user_input.lower() == "exit":
+    # Prompt the user for input
+    user_input = console.input("[bold blue]You:[/bold blue] ")
+    # Check if the user wants to exit the chat
+    if user_input.lower() in ["/exit", "/quit"]:
+        console.print("Exiting chat...")
         break
 
-    response = agent.run({"chat_message": user_input})
-    print(f"Assistant: {response.chat_message}")
+    # Process the user's input through the agent and get the response
+    input_schema = BaseAgentInputSchema(chat_message=user_input)
+    response = agent.run(input_schema)
+
+    # Display the agent's response
+    console.print("Agent: ", response.chat_message)
 ```
 
-### 2. Custom Chatbot
+## Streaming Responses
 
-This example shows how to create a custom chatbot with a specific personality:
+For a more interactive experience, you can use streaming with async processing:
 
 ```python
-from atomic_agents.lib.components.system_prompt_generator import SystemPromptGenerator
+import os
+import instructor
+import openai
+import asyncio
+from rich.console import Console
+from rich.panel import Panel
+from rich.text import Text
+from rich.live import Live
+from atomic_agents.lib.components.agent_memory import AgentMemory
+from atomic_agents.agents.base_agent import BaseAgent, BaseAgentConfig, BaseAgentInputSchema, BaseAgentOutputSchema
 
-# Create custom system prompt
-generator = SystemPromptGenerator(
+# Initialize console for pretty outputs
+console = Console()
+
+# Memory setup
+memory = AgentMemory()
+
+# Initialize memory with an initial message from the assistant
+initial_message = BaseAgentOutputSchema(chat_message="Hello! How can I assist you today?")
+memory.add_message("assistant", initial_message)
+
+# OpenAI client setup using the Instructor library for async operations
+client = instructor.from_openai(openai.AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY")))
+
+# Agent setup with specified configuration
+agent = BaseAgent(
+    config=BaseAgentConfig(
+        client=client,
+        model="gpt-4o-mini",
+        memory=memory,
+    )
+)
+
+# Display the initial message from the assistant
+console.print(Text("Agent:", style="bold green"), end=" ")
+console.print(Text(initial_message.chat_message, style="green"))
+
+async def main():
+    # Start an infinite loop to handle user inputs and agent responses
+    while True:
+        # Prompt the user for input with a styled prompt
+        user_input = console.input("\n[bold blue]You:[/bold blue] ")
+        # Check if the user wants to exit the chat
+        if user_input.lower() in ["/exit", "/quit"]:
+            console.print("Exiting chat...")
+            break
+
+        # Process the user's input through the agent and get the streaming response
+        input_schema = BaseAgentInputSchema(chat_message=user_input)
+        console.print()  # Add newline before response
+
+        # Use Live display to show streaming response
+        with Live("", refresh_per_second=10, auto_refresh=True) as live:
+            current_response = ""
+            async for partial_response in agent.run_async(input_schema):
+                if hasattr(partial_response, "chat_message") and partial_response.chat_message:
+                    # Only update if we have new content
+                    if partial_response.chat_message != current_response:
+                        current_response = partial_response.chat_message
+                        # Combine the label and response in the live display
+                        display_text = Text.assemble(("Agent: ", "bold green"), (current_response, "green"))
+                        live.update(display_text)
+
+if __name__ == "__main__":
+    import asyncio
+    asyncio.run(main())
+```
+
+## Custom Input/Output Schema
+
+For more structured interactions, define custom schemas:
+
+```python
+import os
+import instructor
+import openai
+from rich.console import Console
+from typing import List
+from pydantic import Field
+from atomic_agents.lib.components.system_prompt_generator import SystemPromptGenerator
+from atomic_agents.lib.components.agent_memory import AgentMemory
+from atomic_agents.agents.base_agent import BaseAgent, BaseAgentConfig, BaseAgentInputSchema
+from atomic_agents.lib.base.base_io_schema import BaseIOSchema
+
+# Initialize console for pretty outputs
+console = Console()
+
+# Memory setup
+memory = AgentMemory()
+
+# Custom output schema
+class CustomOutputSchema(BaseIOSchema):
+    """This schema represents the response generated by the chat agent, including suggested follow-up questions."""
+
+    chat_message: str = Field(
+        ...,
+        description="The chat message exchanged between the user and the chat agent.",
+    )
+    suggested_user_questions: List[str] = Field(
+        ...,
+        description="A list of suggested follow-up questions the user could ask the agent.",
+    )
+
+# Initialize memory with an initial message from the assistant
+initial_message = CustomOutputSchema(
+    chat_message="Hello! How can I assist you today?",
+    suggested_user_questions=["What can you do?", "Tell me a joke", "Tell me about how you were made"],
+)
+memory.add_message("assistant", initial_message)
+
+# OpenAI client setup using the Instructor library
+client = instructor.from_openai(openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY")))
+
+# Custom system prompt
+system_prompt_generator = SystemPromptGenerator(
     background=[
-        "You are a friendly assistant that always responds in rhyming verse.",
-        "You maintain a playful and poetic tone while being helpful.",
+        "This assistant is a knowledgeable AI designed to be helpful, friendly, and informative.",
+        "It has a wide range of knowledge on various topics and can engage in diverse conversations.",
     ],
     steps=[
-        "1. Understand the user's question or request",
-        "2. Formulate your response in rhyming verse",
-        "3. Ensure the response is both helpful and entertaining"
+        "Analyze the user's input to understand the context and intent.",
+        "Formulate a relevant and informative response based on the assistant's knowledge.",
+        "Generate 3 suggested follow-up questions for the user to explore the topic further.",
     ],
     output_instructions=[
-        "Always respond in rhyming verse",
-        "Keep responses concise but informative",
-        "Maintain a playful tone"
-    ]
+        "Provide clear, concise, and accurate information in response to user queries.",
+        "Maintain a friendly and professional tone throughout the conversation.",
+        "Conclude each response with 3 relevant suggested questions for the user.",
+    ],
 )
 
-# Create agent with custom configuration
+# Agent setup with specified configuration and custom output schema
 agent = BaseAgent(
     config=BaseAgentConfig(
         client=client,
         model="gpt-4o-mini",
-        system_prompt_generator=generator
+        system_prompt_generator=system_prompt_generator,
+        memory=memory,
+        output_schema=CustomOutputSchema,
     )
 )
+
+# Start a loop to handle user inputs and agent responses
+while True:
+    # Prompt the user for input
+    user_input = console.input("[bold blue]You:[/bold blue] ")
+    # Check if the user wants to exit the chat
+    if user_input.lower() in ["/exit", "/quit"]:
+        console.print("Exiting chat...")
+        break
+
+    # Process the user's input through the agent
+    input_schema = BaseAgentInputSchema(chat_message=user_input)
+    response = agent.run(input_schema)
+
+    # Display the agent's response
+    console.print("[bold green]Agent:[/bold green] ", response.chat_message)
+    
+    # Display the suggested questions
+    console.print("\n[bold cyan]Suggested questions you could ask:[/bold cyan]")
+    for i, question in enumerate(response.suggested_user_questions, 1):
+        console.print(f"[cyan]{i}. {question}[/cyan]")
+    console.print()  # Add an empty line for better readability
+
+## Multiple AI Providers Support
+
+The framework supports multiple AI providers:
+
+```json
+{
+    "openai": "gpt-4o-mini",
+    "anthropic": "claude-3-5-haiku-20241022",
+    "groq": "mixtral-8x7b-32768",
+    "ollama": "llama3",
+    "gemini": "gemini-2.0-flash-exp",
+    "openrouter": "mistral/ministral-8b"
+}
 ```
 
-### 3. Custom Schema
-
-This example demonstrates using a custom output schema:
+Here's how to set up clients for different providers:
 
 ```python
-from pydantic import BaseModel
-from typing import List
+import os
+import instructor
+from rich.console import Console
+from rich.text import Text
+from atomic_agents.lib.components.agent_memory import AgentMemory
+from atomic_agents.agents.base_agent import BaseAgent, BaseAgentConfig, BaseAgentInputSchema, BaseAgentOutputSchema
+from dotenv import load_dotenv
 
-class CustomResponseSchema(BaseModel):
-    chat_message: str
-    follow_up_questions: List[str]
+load_dotenv()
 
-# Create agent with custom schema
+# Initialize console for pretty outputs
+console = Console()
+
+# Memory setup
+memory = AgentMemory()
+
+# Initialize memory with an initial message from the assistant
+initial_message = BaseAgentOutputSchema(chat_message="Hello! How can I assist you today?")
+memory.add_message("assistant", initial_message)
+
+# Function to set up the client based on the chosen provider
+def setup_client(provider):
+    if provider == "openai":
+        from openai import OpenAI
+        api_key = os.getenv("OPENAI_API_KEY")
+        client = instructor.from_openai(OpenAI(api_key=api_key))
+        model = "gpt-4o-mini"
+
+    elif provider == "anthropic":
+        from anthropic import Anthropic
+        api_key = os.getenv("ANTHROPIC_API_KEY")
+        client = instructor.from_anthropic(Anthropic(api_key=api_key))
+        model = "claude-3-5-haiku-20241022"
+
+    elif provider == "groq":
+        from groq import Groq
+        api_key = os.getenv("GROQ_API_KEY")
+        client = instructor.from_groq(
+            Groq(api_key=api_key),
+            mode=instructor.Mode.JSON
+        )
+        model = "mixtral-8x7b-32768"
+
+    elif provider == "ollama":
+        from openai import OpenAI as OllamaClient
+        client = instructor.from_openai(
+            OllamaClient(
+                base_url="http://localhost:11434/v1",
+                api_key="ollama"
+            ),
+            mode=instructor.Mode.JSON
+        )
+        model = "llama3"
+
+    elif provider == "gemini":
+        from openai import OpenAI
+        api_key = os.getenv("GEMINI_API_KEY")
+        client = instructor.from_openai(
+            OpenAI(
+                api_key=api_key,
+                base_url="https://generativelanguage.googleapis.com/v1beta/openai/"
+            ),
+            mode=instructor.Mode.JSON
+        )
+        model = "gemini-2.0-flash-exp"
+        
+    elif provider == "openrouter":
+        from openai import OpenAI as OpenRouterClient
+        api_key = os.getenv("OPENROUTER_API_KEY")
+        client = instructor.from_openai(
+            OpenRouterClient(
+                base_url="https://openrouter.ai/api/v1",
+                api_key=api_key
+            )
+        )
+        model = "mistral/ministral-8b"
+
+    else:
+        raise ValueError(f"Unsupported provider: {provider}")
+
+    return client, model
+
+# Prompt for provider choice
+provider = console.input("Choose a provider (openai/anthropic/groq/ollama/gemini/openrouter): ").lower()
+
+# Set up client and model
+client, model = setup_client(provider)
+
+# Create agent with chosen provider
 agent = BaseAgent(
     config=BaseAgentConfig(
         client=client,
-        model="gpt-4o-mini",
-        output_schema=CustomResponseSchema
+        model=model,
+        memory=memory,
+        model_api_parameters={"max_tokens": 2048}
     )
 )
 ```
 
-### 4. Multiple Providers
+The framework supports multiple providers through Instructor:
 
-This example shows how to use different AI providers:
+- **OpenAI**: Standard GPT models
+- **Anthropic**: Claude models
+- **Groq**: Fast inference for open models
+- **Ollama**: Local models (requires Ollama running)
+- **Gemini**: Google's Gemini models
 
-```python
+Each provider requires its own API key (except Ollama) which should be set in environment variables:
+
+```bash
 # OpenAI
-openai_client = instructor.from_openai(OpenAI())
+export OPENAI_API_KEY="your-openai-key"
+
+# Anthropic
+export ANTHROPIC_API_KEY="your-anthropic-key"
 
 # Groq
-from groq import Groq
-groq_client = instructor.from_openai(Groq())
+export GROQ_API_KEY="your-groq-key"
 
-# Ollama (for local development)
-from atomic_agents.lib.providers.ollama import OllamaClient
-ollama_client = instructor.from_openai(OllamaClient())
+# Gemini
+export GEMINI_API_KEY="your-gemini-key"
 
-# Use any provider
-agent = BaseAgent(
-    config=BaseAgentConfig(
-        client=openai_client,  # or groq_client, or ollama_client
-        model="gpt-4o-mini"    # adjust model name based on provider
-    )
-)
+# OpenRouter
+export OPENROUTER_API_KEY="your-openrouter-key"
 ```
 
 ## Running the Examples
@@ -154,7 +400,9 @@ To run any of these examples:
 
 After trying these examples, you can:
 
-1. Explore [basic concepts](basic_concepts) for deeper understanding
-2. Learn about [tools and their integration](tools.md)
-3. Check out [advanced usage patterns](advanced_usage)
-4. Review the [API reference](../api/index) for detailed documentation
+1. Learn about [tools and their integration](tools.md)
+2. Review the [API reference](../api/index) for detailed documentation
+
+## Explore More Examples
+
+For more advanced usage and examples, please check out the [Atomic Agents examples on GitHub](https://github.com/BrainBlend-AI/atomic-agents/tree/main/atomic-examples). These examples demonstrate various capabilities of the framework including custom schemas, advanced memory usage, tool integration, and more.

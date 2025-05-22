@@ -60,22 +60,26 @@ class BaseAgentOutputSchema(BaseIOSchema):
 
 class BaseAgentConfig(BaseModel):
     client: instructor.client.Instructor = Field(..., description="Client for interacting with the language model.")
-    model: str = Field("gpt-4o-mini", description="The model to use for generating responses.")
-    memory: Optional[AgentMemory] = Field(None, description="Memory component for storing chat history.")
+    model: str = Field(default="gpt-4o-mini", description="The model to use for generating responses.")
+    memory: Optional[AgentMemory] = Field(default=None, description="Memory component for storing chat history.")
     system_prompt_generator: Optional[SystemPromptGenerator] = Field(
-        None, description="Component for generating system prompts."
+        default=None, description="Component for generating system prompts."
     )
-    input_schema: Optional[Type[BaseModel]] = Field(None, description="The schema for the input data.")
-    output_schema: Optional[Type[BaseModel]] = Field(None, description="The schema for the output data.")
+    system_role: Optional[str] = Field(
+        default="system", description="The role of the system in the conversation. None means no system prompt."
+    )
+    input_schema: Optional[Type[BaseModel]] = Field(default=None, description="The schema for the input data.")
+    output_schema: Optional[Type[BaseModel]] = Field(default=None, description="The schema for the output data.")
     model_config = {"arbitrary_types_allowed": True}
     temperature: Optional[float] = Field(
-        0,
+        default=None,
         description="Temperature for response generation, typically ranging from 0 to 1.",
     )
     max_tokens: Optional[int] = Field(
-        None,
+        default=None,
         description="Maximum number of token allowed in the response generation.",
     )
+    model_api_parameters: Optional[dict] = Field(default=None, description="Additional parameters passed to the API provider.")
 
 
 class BaseAgent:
@@ -93,7 +97,12 @@ class BaseAgent:
         memory (AgentMemory): Memory component for storing chat history.
         system_prompt_generator (SystemPromptGenerator): Component for generating system prompts.
         initial_memory (AgentMemory): Initial state of the memory.
-        max_tokens (int): Maximum number of tokens allowed in the response
+        temperature (float): Temperature for response generation, typically ranging from 0 to 1.  For models such as
+            OpenAI o3-mini that do not support temperature, you must explicitly pass 'None'.
+            DEPRECATED: Include 'temperature' in model_api_parameters instead.
+        max_tokens (int): Maximum number of tokens allowed in the response.
+            DEPRECATED: Include 'max_tokens' in model_api_parameters instead.
+        model_api_parameters (dict): Additional parameters passed to the API provider.
     """
 
     input_schema = BaseAgentInputSchema
@@ -112,10 +121,23 @@ class BaseAgent:
         self.model = config.model
         self.memory = config.memory or AgentMemory()
         self.system_prompt_generator = config.system_prompt_generator or SystemPromptGenerator()
+        self.system_role = config.system_role
         self.initial_memory = self.memory.copy()
         self.current_user_input = None
-        self.temperature = config.temperature
-        self.max_tokens = config.max_tokens
+        self.model_api_parameters = config.model_api_parameters or {}
+        if config.temperature is not None:
+            warnings.warn(
+                "'temperature' is deprecated and will soon be removed. Please use 'model_api_parameters' instead.",
+                DeprecationWarning,
+            )
+            if "temperature" not in self.model_api_parameters:
+                self.model_api_parameters["temperature"] = config.temperature
+        if config.max_tokens is not None:
+            warnings.warn(
+                "'max_tokens' is deprecated and will soon be removed. Please use 'model_api_parameters' instead.",
+                DeprecationWarning,
+            )
+            self.model_api_parameters["max_tokens"] = config.max_tokens
 
     def reset_memory(self):
         """
@@ -137,19 +159,23 @@ class BaseAgent:
         if response_model is None:
             response_model = self.output_schema
 
-        messages = [
-            {
-                "role": "system",
-                "content": self.system_prompt_generator.generate_prompt(),
-            }
-        ] + self.memory.get_history()
+        if self.system_role is None:
+            self.messages = []
+        else:
+            self.messages = [
+                {
+                    "role": self.system_role,
+                    "content": self.system_prompt_generator.generate_prompt(),
+                }
+            ]
+
+        self.messages += self.memory.get_history()
 
         response = self.client.chat.completions.create(
-            messages=messages,
+            messages=self.messages,
             model=self.model,
             response_model=response_model,
-            temperature=self.temperature,
-            max_tokens=self.max_tokens,
+            **self.model_api_parameters,
         )
 
         return response
@@ -189,19 +215,23 @@ class BaseAgent:
             self.current_user_input = user_input
             self.memory.add_message("user", user_input)
 
-        messages = [
-            {
-                "role": "system",
-                "content": self.system_prompt_generator.generate_prompt(),
-            }
-        ] + self.memory.get_history()
+        if self.system_role is None:
+            self.messages = []
+        else:
+            self.messages = [
+                {
+                    "role": self.system_role,
+                    "content": self.system_prompt_generator.generate_prompt(),
+                }
+            ]
+
+        self.messages += self.memory.get_history()
 
         response_stream = self.client.chat.completions.create_partial(
             model=self.model,
-            messages=messages,
+            messages=self.messages,
             response_model=self.output_schema,
-            temperature=self.temperature,
-            max_tokens=self.max_tokens,
+            **self.model_api_parameters,
             stream=True,
         )
 

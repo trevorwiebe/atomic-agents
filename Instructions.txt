@@ -1,10 +1,12 @@
-create a virtual python environment
-python3 -m venv <myenvpath>
-source <myenvpath>/bin/activate
+1) Create a virtual python environment
+  python3 -m venv <myenvpath>
+  source <myenvpath>/bin/activate
 
-in the folder where setup.py is located, run pip install .
+2) Install dependencies
+  In the folder where setup.py is located, run pip install .
+  Make sure you can see /atomic-agents/main/main.py
+  Create a .env file in /atomic-agents/main/ and add the model api key
 
-in main/main.py make sure
-
-
-When you make changes to agent/ run this to
+3) Start the script.
+  python3 atomic-agents/main/main.py
+  

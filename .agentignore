@@ -1,35 +1,54 @@
 # Folders and files added here will not be sent to the AI model in the codebase
 
-
-
 # Recommended for android development
-build/
-google-services.json
-src/androidMain/res/
-src/.DS_Store
-.DS_Store
+#build/
+#google-services.json
+#src/androidMain/res/
+#src/.DS_Store
+#.DS_Store
 
 
 # Recommended for KMP development when at looking at the root directory
-.fleet/
-.gradle/
-.idea/
-.kotlin/
-.git/
-agent/
-build/
-composeApp/build
-composeApp/google-services.json
-gradle/
+#.fleet/
+#.gradle/
+#.idea/
+#.kotlin/
+#.git/
+#agent/
+#build/
+#composeApp/build
+#composeApp/google-services.json
+#gradle/
 #whatever environment you are using
-timesheetapp/
-timesheetenv/
-.gitignore
-gradle.properties
-gradlew
-gradlew.bat
-local.properties
-README.md
-settings.gradle.kts
-iosApp/.DS_Store
-iosApp/iosApp/GoogleService-Info.plist
+#timesheetapp/
+#timesheetenv/
+#.gitignore
+#gradle.properties
+#gradlew
+#gradlew.bat
+#local.properties
+#README.md
+#settings.gradle.kts
+#iosApp/.DS_Store
+#iosApp/iosApp/GoogleService-Info.plist
+
+# Recomended for Website development
+.DS_Store
+agent/
+venv/
+node_modules/
+functions/node_modules
+functions/.env
+functions/.eslintrc.js
+functions/package-lock.json
+functions/package.json
+.firebase/
+.firebaserc
+firebase.json
+package.json
+firebase-debug.log
+firestore-debug.log
+package-lock.json
+functions/.gitignore
+.git/
+build/icon-512.png

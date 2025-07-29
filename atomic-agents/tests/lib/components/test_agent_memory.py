@@ -1,3 +1,5 @@
+from enum import Enum
+
 import pytest
 import json
 from typing import List, Dict
@@ -48,6 +50,19 @@ class TestMultimodalSchema(BaseIOSchema):
 
     instruction_text: str = Field(..., description="The instruction text")
     images: List[instructor.Image] = Field(..., description="The images to analyze")
+    pdfs: List[instructor.multimodal.PDF] = Field(..., description="The PDFs to analyze")
+    audio: instructor.multimodal.Audio = Field(..., description="The Audio to analyze")
+
+
+class ColorEnum(str, Enum):
+    BLUE = "blue"
+    RED = "red"
+
+
+class TestEnumSchema(BaseIOSchema):
+    """Test Input Schema with Enum."""
+
+    color: ColorEnum = Field(..., description="Some color.")
 
 
 @pytest.fixture
@@ -82,12 +97,31 @@ def test_manage_overflow(memory):
 
 
 def test_get_history(memory):
+    """
+    Ensure non-ASCII characters are serialized without Unicode escaping, because
+    it can cause issue with some OpenAI models like GPT-4.1.
+
+    Reference ticket: https://github.com/BrainBlend-AI/atomic-agents/issues/138.
+    """
     memory.add_message("user", InputSchema(test_field="Hello"))
     memory.add_message("assistant", TestOutputSchema(test_field="Hi there"))
     history = memory.get_history()
     assert len(history) == 2
     assert history[0]["role"] == "user"
-    assert json.loads(history[0]["content"]) == {"test_field": "Hello"}
+    assert json.loads(history[0]["content"][0]) == {"test_field": "Hello"}
+    assert json.loads(history[1]["content"][0]) == {"test_field": "Hi there"}
+
+
+def test_get_history_allow_unicode(memory):
+    memory.add_message("user", InputSchema(test_field="àéèï"))
+    memory.add_message("assistant", TestOutputSchema(test_field="â"))
+    history = memory.get_history()
+    assert len(history) == 2
+    assert history[0]["role"] == "user"
+    assert history[0]["content"][0] == '{"test_field":"àéèï"}'
+    assert history[1]["content"][0] == '{"test_field":"â"}'
+    assert json.loads(history[0]["content"][0]) == {"test_field": "àéèï"}
+    assert json.loads(history[1]["content"][0]) == {"test_field": "â"}
 
 
 def test_copy(memory):
@@ -142,6 +176,52 @@ def test_dump_and_load(memory):
     assert isinstance(new_memory.history[1].content, TestComplexOutputSchema)
     assert new_memory.history[0].content.text_field == "Hello"
     assert new_memory.history[1].content.response_text == "Hi there"
+
+
+def test_dump_and_load_multimodal_data(memory):
+    test_image = instructor.Image.from_path(path="atomic-agents/tests/files/image_sample.jpg")
+    test_pdf = instructor.multimodal.PDF.from_path(path="atomic-agents/tests/files/pdf_sample.pdf")
+    test_audio = instructor.multimodal.Audio.from_path(path="atomic-agents/tests/files/audio_sample.mp3")
+
+    # multimodal message
+    memory.add_message(
+        role="user",
+        content=TestMultimodalSchema(
+            instruction_text="Analyze this image", images=[test_image], pdfs=[test_pdf], audio=test_audio
+        ),
+    )
+
+    dumped_data = memory.dump()
+    new_memory = AgentMemory()
+    new_memory.load(dumped_data)
+
+    assert new_memory.max_messages == memory.max_messages
+    assert new_memory.current_turn_id == memory.current_turn_id
+    assert len(new_memory.history) == len(memory.history)
+    assert isinstance(new_memory.history[0].content, TestMultimodalSchema)
+    assert new_memory.history[0].content.instruction_text == memory.history[0].content.instruction_text
+    assert new_memory.history[0].content.images == memory.history[0].content.images
+    assert new_memory.history[0].content.pdfs == memory.history[0].content.pdfs
+    assert new_memory.history[0].content.audio == memory.history[0].content.audio
+
+
+def test_dump_and_load_with_enum(memory):
+    """Test that get_history works with Enum."""
+
+    memory.add_message(
+        "user",
+        TestEnumSchema(
+            color=ColorEnum.RED,
+        ),
+    )
+
+    dumped_data = memory.dump()
+    new_memory = AgentMemory()
+    new_memory.load(dumped_data)
+
+    assert new_memory.max_messages == memory.max_messages
+    assert new_memory.current_turn_id == memory.current_turn_id
+    assert len(new_memory.history) == len(memory.history)
 
 
 def test_load_invalid_data(memory):
@@ -284,21 +364,65 @@ def test_agent_memory_delete_turn_id(memory):
         memory.delete_turn_id("non-existent-id")
 
 
+def test_get_history_nested_model(memory):
+    """Test that get_history works with nested models."""
+    # Add complex input
+    memory.add_message(
+        "user",
+        TestComplexInputSchema(
+            text_field="Complex input",
+            number_field=2.718,
+            list_field=["a", "b", "c"],
+            nested_field=TestNestedSchema(nested_field="Nested input", nested_int=99),
+        ),
+    )
+
+    # Add complex output
+    memory.add_message(
+        "assistant",
+        TestComplexOutputSchema(
+            response_text="Complex output",
+            calculated_value=200,
+            data_dict={
+                "key1": TestNestedSchema(nested_field="Nested output 1", nested_int=10),
+                "key2": TestNestedSchema(nested_field="Nested output 2", nested_int=20),
+            },
+        ),
+    )
+
+    # Get history and verify the format
+    history = memory.get_history()
+
+    assert len(history) == 2
+    assert history[0]["role"] == "user"
+    assert history[1]["role"] == "assistant"
+
+    assert history[0]["content"][0] == '{"text_field":"Complex input"}'
+    assert history[1]["content"][0] == '{"response_text":"Complex output"}'
+
+
 def test_get_history_with_multimodal_content(memory):
     """Test that get_history correctly handles multimodal content"""
     # Create a mock image
     mock_image = instructor.Image(source="test_url", media_type="image/jpeg", detail="low")
+    mock_pdf = instructor.multimodal.PDF(source="test_pdf_url")
+    mock_audio = instructor.multimodal.Audio(source="test_audio_url", media_type="audio/mpeg")
 
     # Add a multimodal message
-    memory.add_message("user", TestMultimodalSchema(instruction_text="Analyze this image", images=[mock_image]))
+    memory.add_message(
+        "user",
+        TestMultimodalSchema(instruction_text="Analyze this image", images=[mock_image], pdfs=[mock_pdf], audio=mock_audio),
+    )
 
     # Get history and verify format
     history = memory.get_history()
     assert len(history) == 1
     assert history[0]["role"] == "user"
     assert isinstance(history[0]["content"], list)
-    assert history[0]["content"][0] == '{"instruction_text": "Analyze this image"}'
+    assert history[0]["content"][0] == '{"instruction_text":"Analyze this image"}'
     assert history[0]["content"][1] == mock_image
+    assert history[0]["content"][2] == mock_pdf
+    assert history[0]["content"][3] == mock_audio
 
 
 def test_get_history_with_multiple_images_multimodal_content(memory):
@@ -331,7 +455,38 @@ def test_get_history_with_multiple_images_multimodal_content(memory):
     assert len(history) == 1
     assert history[0]["role"] == "user"
     assert isinstance(history[0]["content"], list)
-    assert history[0]["content"][0] == '{"instruction_text": "Analyze this image"}'
+    assert history[0]["content"][0] == '{"instruction_text":"Analyze this image"}'
     assert mock_image in history[0]["content"]
     assert mock_image_2 in history[0]["content"]
     assert mock_image_3 in history[0]["content"]
+
+
+def test_process_multimodal_paths_with_dict_object():
+    """Test that _process_multimodal_paths handles objects with __dict__ correctly"""
+    from pathlib import Path
+
+    class CustomObject:
+        """A custom object with __dict__ that isn't a Pydantic model or Enum"""
+
+        def __init__(self):
+            self.image = instructor.Image(source="test_path.jpg", media_type="image/jpeg")
+            self.text = "some text"
+            self.nested = None
+
+    # Create test object
+    custom_obj = CustomObject()
+    custom_obj.nested = CustomObject()  # Nested object to test recursion
+
+    # Create a memory instance to access the method
+    memory = AgentMemory()
+
+    # Call _process_multimodal_paths directly
+    memory._process_multimodal_paths(custom_obj)
+
+    # Verify the image path was converted
+    assert isinstance(custom_obj.image.source, Path)
+    assert custom_obj.image.source == Path("test_path.jpg")
+
+    # Verify nested object was also processed
+    assert isinstance(custom_obj.nested.image.source, Path)
+    assert custom_obj.nested.image.source == Path("test_path.jpg")
